@@ -16,73 +16,57 @@ def train_vae(
     project_name="ldm-vae",
     log_enabled=True,
 ):
-    # TODO: build accelerator = Accelerator(mixed_precision="fp16")
     accelerator = Accelerator(mixed_precision="fp16")
 
-    # TODO: build vae = VAE()
     vae = VAE()
-
-    # TODO: build loss_fn = VAELoss(kl_weight=kl_weight)
     loss_fn = VAELoss(kl_weight=kl_weight)
-
-    # TODO: build optimizer = torch.optim.AdamW(vae.parameters(), lr=lr)
-    optimizer = torch.optim.AdamW(vae.parameters(),lr=lr)
-
-    # TODO: build scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    optimizer = torch.optim.AdamW(vae.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=epochs)
-    # TODO: prepare vae, optimizer, dataloader, scheduler through accelerator.prepare(...)
-    #       (assign back to the same variable names)
+
     vae, optimizer, dataloader, scheduler = accelerator.prepare(
-    vae,
-    optimizer,
-    dataloader,
-    scheduler,
+        vae, optimizer, dataloader, scheduler,
     )
-    # TODO: move loss_fn.lpips_loss to accelerator.device
+
     loss_fn.lpips_loss = loss_fn.lpips_loss.to(accelerator.device)
 
-    # TODO: build logger = Logger(project_name=..., config={...}, enabled=log_enabled and accelerator.is_main_process)
-    logger = Logger(project_name=project_name,
-                    config={"epochs":epochs,"lr":lr,"kl_weight":kl_weight},
-                    enabled=log_enabled and accelerator.is_main_process)
+    logger = Logger(
+        project_name=project_name,
+        config={"epochs": epochs, "lr": lr, "kl_weight": kl_weight},
+        enabled=log_enabled and accelerator.is_main_process,
+    )
+
     global_step = 0
     for epoch in range(epochs):
         for batch in dataloader:
             x = batch[0] if isinstance(batch, (list, tuple)) else batch
 
-            # TODO: optimizer.zero_grad()
             optimizer.zero_grad()
 
-            # TODO: forward pass -- out = vae(x), extract recon, mu, logvar
             out = vae(x)
-            recon, mu, logvar = out["recon"],out["mu"],out["logvar"]
-            # TODO: compute total_loss, parts = loss_fn(recon, x, mu, logvar)
-            total_loss,parts = loss_fn(recon,x,mu,logvar)
-            # TODO: accelerator.backward(total_loss)
-            accelerator.backward(total_loss)
+            recon, mu, logvar = out["recon"], out["mu"], out["logvar"]
 
-            # TODO: accelerator.clip_grad_norm_(vae.parameters(), 1.0)
-            accelerator.clip_grad_norm_(vae.parameters(),1.0)
-            # TODO: optimizer.step()
+            total_loss, parts = loss_fn(recon, x, mu, logvar)
+
+            accelerator.backward(total_loss)
+            accelerator.clip_grad_norm_(vae.parameters(), 1.0)
             optimizer.step()
 
-            # TODO: if accelerator.is_main_process: logger.log_dict(parts, step=global_step)
-            if  accelerator.is_main_process:
-                logger.log_dict(parts,step=global_step)
+            if accelerator.is_main_process:
+                logger.log_dict(parts, step=global_step)
 
             global_step += 1
 
-        # TODO: scheduler.step()  -- once per epoch
         scheduler.step()
 
-        # TODO: if accelerator.is_main_process:
-        #           print epoch summary (e.g. f"Epoch {epoch+1}/{epochs} done. Last loss: {parts['total_loss']:.4f}")
-        #           accelerator.save_state(f"{checkpoint_dir}/epoch_{epoch+1}")
         if accelerator.is_main_process:
             print(f"Epoch {epoch+1}/{epochs} done. Last loss: {parts['total_loss']:.4f}")
             accelerator.save_state(f"{checkpoint_dir}/epoch_{epoch+1}")
 
-    # TODO: logger.finish()
+    if accelerator.is_main_process:
+        unwrapped_vae = accelerator.unwrap_model(vae)
+        torch.save(unwrapped_vae.state_dict(), f"{checkpoint_dir}/vae_final.pt")
+        print(f"Final VAE weights saved to {checkpoint_dir}/vae_final.pt")
+
     logger.finish()
 
     return vae
