@@ -5,6 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ldm-from-scratch"
 version = "0.1.0"
+dependencies = [
+    "torch",
+    "accelerate",
+    "wandb",
+    "lpips",
+    "pyyaml",
+    "einops",
+]
 
 [tool.setuptools]
 packages = ["models", "nn", "configs", "diffusion", "utils"]
