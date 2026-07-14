@@ -1,0 +1,22 @@
+model:
+  in_channels: 3
+  base_channels: 128
+  z_channels: 4
+  num_groups: 32
+
+training:
+  epochs: 20
+  batch_size: 64
+  lr: 1.0e-4
+  kl_weight: 1.0e-6
+
+data:
+  root: "/kaggle/input/datasets/ayush1220/cifar10/cifar10"
+  train_val_split: 0.9
+
+logging:
+  project_name: "ldm-vae"
+  log_enabled: true
+
+checkpointing:
+  checkpoint_dir: "/kaggle/working/checkpoints/vae"

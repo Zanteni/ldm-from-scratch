@@ -73,17 +73,47 @@ def train_vae(
 
 
 if __name__ == "__main__":
+    import argparse
     from torch.utils.data import TensorDataset, DataLoader
+    from utils.config import load_config
+    from dataset import get_cifar10_datasets, ImageOnlyDataset
 
-    dummy_data = torch.randn(16, 3, 32, 32)
-    dummy_dataset = TensorDataset(dummy_data)
-    dummy_dataloader = DataLoader(dummy_dataset, batch_size=8, shuffle=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="configs/vae_config.yaml")
+    parser.add_argument("--smoketest", action="store_true")
+    args = parser.parse_args()
 
-    train_vae(
-        dataloader=dummy_dataloader,
-        epochs=1,
-        checkpoint_dir="checkpoints/vae_smoketest",
-        project_name="ldm-vae-smoketest",
-        log_enabled=False,
-    )
-    print("Smoke test complete.")
+    if args.smoketest:
+        dummy_data = torch.randn(16, 3, 32, 32)
+        dummy_dataset = TensorDataset(dummy_data)
+        dummy_dataloader = DataLoader(dummy_dataset, batch_size=8, shuffle=True)
+
+        train_vae(
+            dataloader=dummy_dataloader,
+            epochs=1,
+            checkpoint_dir="checkpoints/vae_smoketest",
+            project_name="ldm-vae-smoketest",
+            log_enabled=False,
+        )
+        print("Smoke test complete.")
+    else:
+        cfg = load_config(args.config)
+
+        train_set, val_set, test_set = get_cifar10_datasets(
+            root=cfg["data"]["root"],
+            train_val_split=cfg["data"]["train_val_split"],
+        )
+        wrapped_train = ImageOnlyDataset(train_set)
+        train_dataloader = DataLoader(
+            wrapped_train, batch_size=cfg["training"]["batch_size"], shuffle=True
+        )
+
+        train_vae(
+            dataloader=train_dataloader,
+            epochs=cfg["training"]["epochs"],
+            lr=cfg["training"]["lr"],
+            kl_weight=cfg["training"]["kl_weight"],
+            checkpoint_dir=cfg["checkpointing"]["checkpoint_dir"],
+            project_name=cfg["logging"]["project_name"],
+            log_enabled=cfg["logging"]["log_enabled"],
+        )
