@@ -15,28 +15,38 @@ def train_vae(
     checkpoint_dir="checkpoints/vae",
     project_name="ldm-vae",
     log_enabled=True,
+    resume_checkpoint=None,
+    resume_from_epoch=0,
 ):
     accelerator = Accelerator(mixed_precision="fp16")
 
     vae = VAE()
     loss_fn = VAELoss(kl_weight=kl_weight)
     optimizer = torch.optim.AdamW(vae.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=epochs)
+
+    total_epochs = resume_from_epoch + epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=total_epochs)
 
     vae, optimizer, dataloader, scheduler = accelerator.prepare(
         vae, optimizer, dataloader, scheduler,
     )
 
+    if resume_checkpoint is not None:
+        accelerator.load_state(resume_checkpoint)
+        scheduler.T_max = total_epochs  # override T_max restored from the checkpoint's saved state
+        if accelerator.is_main_process:
+            print(f"Resumed from {resume_checkpoint}, continuing from epoch {resume_from_epoch}")
+
     loss_fn.lpips_loss = loss_fn.lpips_loss.to(accelerator.device)
 
     logger = Logger(
         project_name=project_name,
-        config={"epochs": epochs, "lr": lr, "kl_weight": kl_weight},
+        config={"epochs": total_epochs, "lr": lr, "kl_weight": kl_weight, "resumed_from": resume_from_epoch},
         enabled=log_enabled and accelerator.is_main_process,
     )
 
     global_step = 0
-    for epoch in range(epochs):
+    for epoch in range(resume_from_epoch, total_epochs):
         for batch in dataloader:
             x = batch[0] if isinstance(batch, (list, tuple)) else batch
 
@@ -59,7 +69,7 @@ def train_vae(
         scheduler.step()
 
         if accelerator.is_main_process:
-            print(f"Epoch {epoch+1}/{epochs} done. Last loss: {parts['total_loss']:.4f}")
+            print(f"Epoch {epoch+1}/{total_epochs} done. Last loss: {parts['total_loss']:.4f}")
             accelerator.save_state(f"{checkpoint_dir}/epoch_{epoch+1}")
 
     if accelerator.is_main_process:
@@ -81,6 +91,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/vae_config.yaml")
     parser.add_argument("--smoketest", action="store_true")
+    parser.add_argument("--resume_checkpoint", type=str, default=None)
+    parser.add_argument("--resume_from_epoch", type=int, default=0)
     args = parser.parse_args()
 
     if args.smoketest:
@@ -116,4 +128,6 @@ if __name__ == "__main__":
             checkpoint_dir=cfg["checkpointing"]["checkpoint_dir"],
             project_name=cfg["logging"]["project_name"],
             log_enabled=cfg["logging"]["log_enabled"],
+            resume_checkpoint=args.resume_checkpoint,
+            resume_from_epoch=args.resume_from_epoch,
         )
