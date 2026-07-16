@@ -30,11 +30,6 @@ class VAE(nn.Module):
         mu, logvar = torch.chunk(h, 2, dim=1)
         return mu, logvar
 
-    def reparametrize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
     def decode(self, z):
         return self.decoder(z)
 
@@ -51,6 +46,11 @@ class VAE(nn.Module):
             "kl": kl,
         }
         return out
+    @staticmethod
+    def reparametrize(mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
 
     @staticmethod
     def kl_divergence(mu, logvar):
