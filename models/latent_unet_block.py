@@ -6,24 +6,23 @@ from models.attention_block import AttentionBlock
 
 
 def get_channel_multipliers(N, max_mult):
-    """
-    Returns a list of length N+1 describing the channel multiplier at each
-    point in the block's internal N TimeResBlocks. Ramps up by doubling
-    until max_mult, plateaus at max_mult as long as needed, then mirrors
-    back down to 1. Assumes N is large enough to reach max_mult.
-    """
     ramp_up = [1]
     while ramp_up[-1] < max_mult:
         ramp_up.append(ramp_up[-1] * 2)
 
     ramp_down = ramp_up[:-1][::-1]
+    minimum_N = len(ramp_up) + len(ramp_down) - 1
+
+    if N < minimum_N:
+        raise ValueError(
+            f"N={N} is too small to reach max_mult={max_mult} and return to 1. "
+            f"Minimum N for this max_mult is {minimum_N}."
+        )
 
     total_needed = N + 1
     plateau_length = total_needed - len(ramp_up) - len(ramp_down)
 
     return ramp_up + [max_mult] * plateau_length + ramp_down
-
-
 class LatentUNetBlock(nn.Module):
     def __init__(self, base_channels, time_emb_dim, N, max_mult=4, num_groups=32, num_heads=4):
         super().__init__()
