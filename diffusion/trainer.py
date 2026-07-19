@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 
-from models.latent_unet import LatentUNet
+from models.latent_unet import LatentUNet, ConditionalLatentUNet
 from diffusion.scheduler import get_beta_schedule, get_diffusion_constants
 from diffusion.diffusion_loss import compute_diffusion_loss
 from utils.logging import Logger
@@ -25,16 +25,34 @@ def train_diffusion(
     log_enabled=True,
     resume_checkpoint=None,
     resume_from_epoch=0,
+    conditional=False,
+    num_classes=10,
+    class_emb_dim=256,
+    drop_prob=0.1,
 ):
     accelerator = Accelerator(mixed_precision="fp16")
-    model = LatentUNet(
-        z_channels=z_channels,
-        base_channels=base_channels,
-        time_emb_dim=time_emb_dim,
-        N=N,
-        L=L,
-        max_mult=max_mult,
-    )
+
+    if conditional:
+        model = ConditionalLatentUNet(
+            z_channels=z_channels,
+            base_channels=base_channels,
+            time_emb_dim=time_emb_dim,
+            num_classes=num_classes,
+            class_emb_dim=class_emb_dim,
+            N=N,
+            L=L,
+            max_mult=max_mult,
+        )
+    else:
+        model = LatentUNet(
+            z_channels=z_channels,
+            base_channels=base_channels,
+            time_emb_dim=time_emb_dim,
+            N=N,
+            L=L,
+            max_mult=max_mult,
+        )
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
     total_epochs = resume_from_epoch + epochs
@@ -54,35 +72,55 @@ def train_diffusion(
         if accelerator.is_main_process:
             print(f"Resumed from {resume_checkpoint}, continuing from epoch {resume_from_epoch}")
 
+    config = {
+        "epochs": total_epochs,
+        "lr": lr,
+        "T": T,
+        "schedule_type": schedule_type,
+        "z_channels": z_channels,
+        "base_channels": base_channels,
+        "time_emb_dim": time_emb_dim,
+        "N": N,
+        "L": L,
+        "resumed_from": resume_from_epoch,
+        "conditional": conditional,
+    }
+    if conditional:
+        config.update({
+            "num_classes": num_classes,
+            "class_emb_dim": class_emb_dim,
+            "drop_prob": drop_prob,
+        })
+
     logger = Logger(
         project_name=project_name,
-        config={
-            "epochs": total_epochs,
-            "lr": lr,
-            "T": T,
-            "schedule_type": schedule_type,
-            "z_channels": z_channels,
-            "base_channels": base_channels,
-            "time_emb_dim": time_emb_dim,
-            "N": N,
-            "L": L,
-            "resumed_from": resume_from_epoch,
-        },
+        config=config,
         enabled=log_enabled and accelerator.is_main_process,
     )
 
     global_step = 0
     for epoch in range(resume_from_epoch, total_epochs):
         for batch in dataloader:
-            x = batch[0] if isinstance(batch, (list, tuple)) else batch
+            if conditional:
+                x, labels = batch
+            else:
+                x = batch[0] if isinstance(batch, (list, tuple)) else batch
+                labels = None
+
             B = x.shape[0]
             t = torch.randint(0, T, (B,), device=accelerator.device)
+
+            if conditional:
+                drop_mask = torch.rand(B, device=accelerator.device) < drop_prob
+                null_idx = num_classes
+                labels = torch.where(drop_mask, torch.full_like(labels, null_idx), labels)
 
             optimizer.zero_grad()
             loss = compute_diffusion_loss(
                 model, x, t,
                 constants["sqrt_alphas_cumprod"],
                 constants["sqrt_one_minus_alphas_cumprod"],
+                class_labels=labels,
             )
             accelerator.backward(loss)
             accelerator.clip_grad_norm_(model.parameters(), 1.0)
@@ -109,6 +147,7 @@ def train_diffusion(
 if __name__ == "__main__":
     from torch.utils.data import TensorDataset
 
+    # --- Unconditional smoke test ---
     dummy_z = torch.randn(16, 4, 8, 8)
     dummy_dataset = TensorDataset(dummy_z)
     dummy_dataloader = DataLoader(dummy_dataset, batch_size=8, shuffle=True)
@@ -123,4 +162,24 @@ if __name__ == "__main__":
         project_name="ldm-diffusion-smoketest",
         log_enabled=False,
     )
-    print("Smoke test complete.")
+    print("Unconditional smoke test complete.")
+
+    # --- Conditional smoke test ---
+    dummy_z_cond = torch.randn(16, 4, 8, 8)
+    dummy_labels = torch.randint(0, 10, (16,))
+    dummy_conditional_dataset = TensorDataset(dummy_z_cond, dummy_labels)
+    dummy_conditional_dataloader = DataLoader(dummy_conditional_dataset, batch_size=8, shuffle=True)
+
+    train_diffusion(
+        dataloader=dummy_conditional_dataloader,
+        T=100,
+        epochs=1,
+        N=4,
+        L=2,
+        conditional=True,
+        num_classes=10,
+        checkpoint_dir="checkpoints/diffusion_conditional_smoketest",
+        project_name="ldm-diffusion-conditional-smoketest",
+        log_enabled=False,
+    )
+    print("Conditional smoke test complete.")
