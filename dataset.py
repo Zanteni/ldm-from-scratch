@@ -93,3 +93,56 @@ class LatentDataset(Dataset):
         mu, logvar = self.all_mu[idx], self.all_logvar[idx]
         z = VAE.reparametrize(mu=mu, logvar=logvar)
         return (z,)
+    
+@torch.no_grad()
+def build_conditional_latent_cache(vae, dataloader, device="cpu"):
+    """
+    Same as build_latent_cache, but also collects the class label for
+    each image, needed for class-conditioned diffusion training.
+    Returns (all_mu, all_logvar, all_labels).
+    """
+    # same as build_latent_cache, but each batch is (img_batch, label_batch)
+    # instead of (img_batch,) -- collect label_batch into a labels_list too,
+    # torch.cat at the end alongside mu/logvar
+    vae.eval()
+    vae.to(device=device)
+
+    for param in vae.encoder.parameters():
+        param.requires_grad = False
+
+    mu_list, logvar_list,labels_list = [], [],[]
+    for batch in dataloader:
+        img_batch,img_label = batch[0],batch[1]
+        img_batch = img_batch.to(device)
+        img_label = img_label.to(device)
+        mu, logvar = vae.encode(img_batch)
+        mu_list.append(mu.cpu())
+        logvar_list.append(logvar.cpu())
+        labels_list.append(img_label.cpu())
+    all_mu = torch.concat(mu_list,dim=0)
+    all_logvar = torch.concat(logvar_list,dim=0)
+    all_labels = torch.concat(labels_list,dim=0)
+    return all_mu,all_logvar,all_labels
+
+    
+
+
+    
+
+class ConditionalLatentDataset(Dataset):
+    """
+    Wraps precomputed (mu, logvar, label) tensors. Same fresh-resampling
+    behavior as LatentDataset, but __getitem__ also returns the label.
+    """
+    def __init__(self, all_mu, all_logvar, all_labels):
+        self.all_mu = all_mu
+        self.all_logvar = all_logvar
+        self.all_labels = all_labels
+    def __len__(self):
+        return self.all_mu.shape[0]
+    def __getitem__(self, idx):
+        # z = VAE.reparametrize(mu, logvar)
+        z = VAE.reparametrize(mu=self.all_mu[idx],logvar=self.all_logvar[idx])
+        label = self.all_labels[idx]
+        # return (z, label) -- or (z,label) tuple, your call on exact format
+        return (z,label)
