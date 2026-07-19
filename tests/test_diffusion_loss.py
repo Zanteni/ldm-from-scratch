@@ -69,6 +69,68 @@ def run_diffusion_loss_suite():
     test_gradient_flow()
     print("===== ALL TESTS PASSED =====")
 
+class DummyConditionalNoisePredictor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.dummy_param = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x_t, t, c):
+        return torch.zeros_like(x_t) + self.dummy_param
+
+
+def test_loss_is_finite_and_scalar():
+    T = 1000
+    betas = get_beta_schedule("linear", T)
+    constants = get_diffusion_constants(betas)
+    model = DummyConditionalNoisePredictor()
+    B = 4
+    x_0 = torch.randn(B, 4, 8, 8)
+    t = torch.randint(0, T, (B,))
+    c = torch.randint(0, 10, (B,))
+    loss = compute_diffusion_loss(
+        model=model,
+        x_0=x_0,
+        t=t,
+        sqrt_alphas_cumprod=constants["sqrt_alphas_cumprod"],
+        sqrt_one_minus_alphas_cumprod=constants["sqrt_one_minus_alphas_cumprod"],
+        class_labels=c,
+    )
+    assert loss.dim() == 0, f"Expected scalar loss, got {loss.shape}."
+    assert loss.isfinite(), f"Loss is not finite, Loss: {loss}."
+    print("[OK] Loss is finite and scalar test passed.")
+
+
+def test_gradient_flow():
+    T = 1000
+    betas = get_beta_schedule("linear", T)
+    constants = get_diffusion_constants(betas)
+    model = DummyConditionalNoisePredictor()
+    B = 4
+    x_0 = torch.randn(B, 4, 8, 8)
+    t = torch.randint(0, T, (B,))
+    c = torch.randint(0, 10, (B,))
+    loss = compute_diffusion_loss(
+        model=model,
+        x_0=x_0,
+        t=t,
+        sqrt_alphas_cumprod=constants["sqrt_alphas_cumprod"],
+        sqrt_one_minus_alphas_cumprod=constants["sqrt_one_minus_alphas_cumprod"],
+        class_labels=c,
+    )
+    loss.backward()
+    assert model.dummy_param.grad is not None, "No gradient reached dummy_param."
+    assert not torch.isnan(model.dummy_param.grad).any(), "Gradient contains NaN."
+    assert not torch.isinf(model.dummy_param.grad).any(), "Gradient contains Inf."
+    print(f"[OK] gradient flow test passed: dummy_param.grad={model.dummy_param.grad.item():.4f}")
+
+
+def run_diffusion_conditional_loss_suite():
+    print("===== DIFFUSION CONDITIONAL LOSS TEST =====")
+    test_loss_is_finite_and_scalar()
+    test_gradient_flow()
+    print("===== ALL CFG TESTS PASSED =====")
+
 
 if __name__ == "__main__":
     run_diffusion_loss_suite()
+    run_diffusion_conditional_loss_suite()

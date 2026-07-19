@@ -12,12 +12,15 @@ import torch.nn.functional as F
 from diffusion.forward_process import forward_diffusion_sample
 
 
-def compute_diffusion_loss(model, x_0, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod):
+def compute_diffusion_loss(model, x_0, t, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, class_labels=None):
     x_t, eps = forward_diffusion_sample(
         x_0=x_0,
         t=t,
         sqrt_alphas_cumprod=sqrt_alphas_cumprod,
         sqrt_one_minus_alphas_cumprod=sqrt_one_minus_alphas_cumprod,
     )
-    eps_pred = model(x_t, t)
+    if class_labels is not None:
+        eps_pred = model(x_t, t, class_labels)
+    else:
+        eps_pred = model(x_t, t)
     return F.mse_loss(eps, eps_pred)
