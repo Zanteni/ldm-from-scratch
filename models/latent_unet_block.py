@@ -62,3 +62,46 @@ class LatentUNetBlock(nn.Module):
             x = blk(x, t_emb)
         x = self.attn(x)
         return x
+    
+from models.class_attention_block import ClassAttentionBlock
+
+
+class ConditionalLatentUNetBlock(nn.Module):
+    """
+    Same as LatentUNetBlock, but the final AttentionBlock is replaced with
+    ClassAttentionBlock, which concatenates a class token before
+    self-attention and drops it afterward. TimeResBlocks are unchanged --
+    class conditioning only touches the attention step, per the earlier
+    design decision that ResBlocks stay purely time-conditioned.
+    """
+
+    def __init__(self, base_channels, time_emb_dim, class_emb_dim, N, max_mult=4, num_groups=32, num_heads=4):
+        super().__init__()
+        self.base_channels = base_channels
+        self.time_emb_dim = time_emb_dim
+        self.N = N
+        self.max_mult = max_mult
+        self.num_groups = num_groups
+        self.num_heads = num_heads
+
+        multiplier_list = get_channel_multipliers(N=N, max_mult=max_mult)
+        self.time_resblocks = nn.ModuleList()
+        for i in range(N):
+            res = TimeResBlock(
+                in_channels=base_channels * multiplier_list[i],
+                out_channels=base_channels * multiplier_list[i + 1],
+                time_emb_dim=time_emb_dim,
+                num_groups=num_groups,
+            )
+            self.time_resblocks.append(res)
+        self.attn = ClassAttentionBlock(channels=base_channels,
+                                        class_emb_dim=class_emb_dim,
+                                        num_groups=num_groups,
+                                        num_heads=num_heads)
+        
+
+    def forward(self, x, t_emb, c):
+        for  blk in self.time_resblocks:
+            x = blk(x,t_emb)
+        x = self.attn(x,c)
+        return x
